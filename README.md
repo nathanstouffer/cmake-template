@@ -9,3 +9,12 @@ A template repository for how I like to structure my CMake projects
 1. Rename `code/src/PROJECT_NAME`
 1. Rename `code/tests/PROJECT_NAME`
 1. Resolve any `POPULATE` comments
+
+# Attribution
+
+Many thanks to the open-source software that enables this project.
+
+* [cmake](https://cmake.org/)
+* [googletest](https://github.com/google/googletest.git)
+* [doxygen](https://www.doxygen.nl/)
+* [doxygen-awesome-css](https://github.com/jothepro/doxygen-awesome-css)
