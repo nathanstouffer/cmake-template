@@ -1,6 +1,6 @@
 enable_testing()
 
-# POPULATE: the cpp files in a variable stored as the name of the project
+# POPULATE: the files for this project in a variable stored as the name of the project
 # set(_TEST_FILES
 #     "${CMAKE_CURRENT_SOURCE_DIR}/cpp/"
 # )
