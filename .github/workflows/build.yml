@@ -40,44 +40,99 @@ jobs:
           - build_type: Coverage
             host: { cpp_compiler: clang++-18, c_compiler: clang-18, image: ubuntu-24.04, generator: Unix Makefiles }
 
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/code/deps/vcpkg
+      VCPKG_BINARY_CACHE: ${{ github.workspace }}/.vcpkg_binary_cache
+      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.vcpkg_binary_cache,readwrite
+      VCPKG_FEATURE_FLAGS: manifests,binarycaching
+
     steps:
       - name: checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
 
       # Use this to set up an open ssh debugging session with CI
       # - name: Setup ssh session
       #   uses: lhotari/action-upterm@v1
 
+      - name: Compute vcpkg SHA
+        shell: bash
+        run: echo "VCPKG_SHA=$(git -C code/deps/vcpkg rev-parse HEAD)" >> "$GITHUB_ENV"
+
       - name: Set reusable strings
-        # Turn repeated input strings (such as the build output directory) into step outputs. These step outputs can be used throughout the workflow file.
+        # Turn repeated input strings (such as the presets) into step outputs. These step outputs can be used throughout the workflow file.
         id: strings
         shell: bash
         run: |
-          echo "src-dir=${{ github.workspace }}/code/src" >> "$GITHUB_OUTPUT"
-          echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
-          echo "tests-output-dir=${{ github.workspace }}/build/code/tests/TARGET" >> "$GITHUB_OUTPUT"
+          echo "configure-preset=${{ matrix.host.preset_prefix }}-${{ matrix.build_type }}" >> "$GITHUB_OUTPUT"
+          echo "build-preset=${{ matrix.host.preset_prefix }}-${{ matrix.build_type }}" >> "$GITHUB_OUTPUT"
+          echo "tests-output-dir=${{ github.workspace }}/out/build/code/tests/TARGET" >> "$GITHUB_OUTPUT"
+
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            echo "compiler-cacher"=sccache >> "$GITHUB_OUTPUT"
+          else
+            echo "compiler-cacher"=ccache >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Cache vcpkg downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_ROOT }}/downloads
+          key: vcpkgdl-${{ matrix.host.image }}-vcpkg:${{ env.VCPKG_SHA }}-manifest:${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: |
+            vcpkgdl-${{ matrix.host.image }}-vcpkg:${{ env.VCPKG_SHA }}
+
+      - name: Cache vcpkg binaries
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_BINARY_CACHE }}
+          key: >
+            vcpkgbin-${{ matrix.host.image }}-${{ matrix.build_type }}-${{ matrix.host.preset_prefix }}
+            -vcpkg:${{ env.VCPKG_SHA }}
+            -manifest:${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        if: runner.os != 'Windows'
+        with:
+          key: ccache-${{ matrix.host.image }}-${{ matrix.build_type }}-${{ matrix.host.preset_prefix }}
+          max-size: 500M
+
+      - name: sccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        if: runner.os == 'Windows'
+        with:
+          variant: sccache
+          key: ccache-${{ matrix.host.image }}-${{ matrix.build_type }}-${{ matrix.host.preset_prefix }}
+          max-size: 500M
+
+      - name: bootstrap vcpkg (windows)
+        if: runner.os == 'Windows'
+        run: ${{ github.workspace }}\code\deps\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+
+      - name: bootstrap vcpkg (mac)
+        if: runner.os != 'Windows'
+        run: ${{ github.workspace }}/code/deps/vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Setup MSVC dev environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
 
       - name: Configure CMake
-        # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
-        # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
         run: >
-          cmake
-          -G "${{ matrix.host.generator }}"
-          -S ${{ github.workspace }}
-          -B ${{ steps.strings.outputs.build-output-dir }}
-          -DCMAKE_CXX_COMPILER=${{ matrix.host.cpp_compiler }}
-          -DCMAKE_C_COMPILER=${{ matrix.host.c_compiler }}
-          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          cmake --preset ${{ steps.strings.outputs.configure-preset }}
+          -DCMAKE_C_COMPILER_LAUNCHER=${{ steps.strings.outputs.compiler-cacher }}
+          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ steps.strings.outputs.compiler-cacher }}
 
       - name: Build
-        # Build your program with the given configuration. Note that --config is needed because the default Windows generator is a multi-config generator (Visual Studio generator).
-        run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
+        run: cmake --build --preset ${{ steps.strings.outputs.build-preset }}
 
       - name: Test
-        working-directory: ${{ steps.strings.outputs.build-output-dir }}
         # Execute tests defined by the CMake configuration. Note that --build-config is needed because the default Windows generator is a multi-config generator (Visual Studio generator).
         # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
-        run: ctest --build-config ${{ matrix.build_type }}
+        run: ctest --test-dir out/build/${{ steps.strings.outputs.build-preset }} --build-config ${{ matrix.build_type }} --output-on-failure --no-tests=error
 
       - name: Compute Code Coverage
         if: ${{ matrix.build_type == 'Coverage' }}
