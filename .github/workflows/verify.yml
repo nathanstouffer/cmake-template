@@ -1,0 +1,31 @@
+name: verify
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  formatting:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: checkout
+        uses: actions/checkout@v3
+
+      - name: Verify formatting and LF
+        run: |
+          # Fail on first file that has CRLF
+          for f in $(git ls-files); do
+              # Check LF
+              if grep -q $'\r' "$f"; then
+                  echo "File $f has CRLF line endings. Please convert to LF."
+                  exit 1
+              fi
+          done
+
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format-20
+
+      - name: Run clang-format check
+        run: clang-format -style=file --dry-run --Werror $(git ls-files code/src/*.hpp code/tests/*.cpp code/tests/*.hpp)
